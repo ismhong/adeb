@@ -1,5 +1,6 @@
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/share/bcc/tools/
 export TMPDIR=/tmp/
+export ARCH=arm
 
 psk=/proc/sys/kernel/kptr_restrict
 if [ -f $psk ]; then echo 0 > $psk; fi

@@ -1,0 +1,75 @@
+#!/bin/bash
+
+set -e
+
+if [[ $EUID -ne 0 ]]; then
+   echo "This script must be run as root"
+   exit 1
+fi
+
+spath="$(dirname "$(readlink -f "$0")")"
+source $spath/utils/support
+source $spath/utils/banners
+
+TDIR=$spath/armhf
+RUN_DIR=$spath/armhf/debian
+
+# setup minimal rootfs
+qemu-debootstrap \
+   --arch armhf \
+   --include=libelf1,python,python-netaddr,python-pyroute2,xz-utils,trace-cmd \
+   --variant=minbase buster $RUN_DIR http://ftp.tw.debian.org/debian
+
+# Sync the built BCC from the build chroot onto the run chroot
+tar zxf $TDIR/future-usr.tgz -C $TDIR 
+rsync -rav $TDIR/future-usr/ $RUN_DIR/usr/
+rm -rf $TDIR/future-usr
+
+tar zxf $TDIR/kheaders-4.14.127+.tgz -C $TDIR
+mv $TDIR/kheaders-4.14.127+ $RUN_DIR/tmp/
+
+# Make bash the default shell
+chroot $RUN_DIR rm /bin/sh || true
+chroot $RUN_DIR ln -s /bin/bash /bin/sh || true
+cp $spath/addons/bashrc $RUN_DIR/.bashrc
+cp $spath/addons/bashrc.common $RUN_DIR/.bashrc.common
+cp $spath/addons/bashrc.silent $RUN_DIR/.bashrc.silent
+cp $spath/addons/get_kvers.sh $RUN_DIR/
+
+# Cleanup
+find   $RUN_DIR -name "*.a" |xargs rm -rf
+rm -rf $RUN_DIR/lib/udev/*
+rm -rf $RUN_DIR/var/lib/apt/lists/*
+rm -rf $RUN_DIR/var/cache/apt/archives/*deb
+rm -rf $RUN_DIR/usr/share/locale/*
+rm -rf $RUN_DIR/usr/lib/share/locale/*
+rm -rf $RUN_DIR/usr/share/doc/*
+rm -rf $RUN_DIR/usr/lib/share/doc/*
+rm -rf $RUN_DIR/usr/share/ieee-data/*
+rm -rf $RUN_DIR/usr/lib/share/ieee-data/*
+rm -rf $RUN_DIR/usr/share/man/*
+rm -rf $RUN_DIR/usr/lib/share/man/*
+
+rm -rf $RUN_DIR/var/cache/debconf/*
+rm -rf $RUN_DIR/var/cache/apt/*.bin
+
+# Fix apt-get issue: Android requires _apt user to be in the
+# AID_INET group which is also android specific.
+grep -ri _apt:x:100:65534 $RUN_DIR/etc/passwd > /dev/null 2>&1
+if [ $? -ne 0 ]; then
+	c_warning "_apt user cannot be added to AID_INET group"
+else
+	sed -i -e 's/_apt:x:100:65534/_apt:x:100:3003/' $RUN_DIR/etc/passwd
+fi
+
+# Add a default DNS server
+echo "nameserver 8.8.8.8" > $RUN_DIR/etc/resolv.conf
+echo "140.110.240.80 ftp.tw.debian.org" > $RUN_DIR/etc/hosts
+
+# Should we really do this?
+#chmod -R 0777 $TDIR/
+
+c_info "Compressing new filesystem to prepare to push to Android /data/androdeb/"
+tar -zcf $TDIR/deb.tar.gz -C $TDIR debian
+
+chmod 0777 $TDIR/deb.tar.gz
